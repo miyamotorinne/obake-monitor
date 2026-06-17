@@ -1,0 +1,141 @@
+@tailwind base;
+@tailwind components;
+@tailwind utilities;
+
+:root {
+  --background: #050505;
+  --foreground: #cccccc;
+}
+
+body {
+  color: var(--foreground);
+  background: var(--background);
+  font-family: 'MS PGothic', 'Courier New', Courier, monospace;
+  line-height: 1.6;
+  padding: 20px;
+  max-width: 600px;
+  margin: 0 auto;
+}
+
+a {
+  color: #666;
+  text-decoration: none;
+  border-bottom: 1px dashed #666;
+}
+
+a:hover {
+  color: #aaa;
+  border-bottom: 1px solid #aaa;
+}
+
+input, button {
+  font-family: inherit;
+}
+
+input[type="text"], input[type="password"] {
+  background: #0a0a0a;
+  border: 1px solid #333;
+  color: #ccc;
+  padding: 6px 10px;
+  width: 100%;
+  box-sizing: border-box;
+}
+
+button {
+  background: #111;
+  border: 1px solid #333;
+  color: #aaa;
+  padding: 6px 12px;
+  cursor: pointer;
+}
+
+button:hover {
+  background: #222;
+  color: #fff;
+  border-color: #555;
+}
+
+.status-box {
+  border: 1px solid #222;
+  background: #0a0a0a;
+  padding: 20px;
+  text-align: center;
+  margin-bottom: 30px;
+}
+
+.status-title {
+  font-size: 0.9em;
+  color: #666;
+  margin-bottom: 10px;
+}
+
+.status-value {
+  font-size: 2.5em;
+  font-weight: normal;
+  letter-spacing: 0.1em;
+  color: #eee;
+  text-shadow: 0 0 5px rgba(255, 255, 255, 0.2);
+}
+
+.section {
+  margin-bottom: 40px;
+}
+
+.section-title {
+  font-size: 1.1em;
+  border-bottom: 1px solid #222;
+  padding-bottom: 5px;
+  margin-bottom: 15px;
+  color: #888;
+}
+
+.reaction-btn {
+  display: inline-flex;
+  flex-direction: column;
+  align-items: center;
+  background: transparent;
+  border: 1px solid #222;
+  padding: 10px;
+  min-width: 80px;
+}
+.reaction-btn:hover {
+  background: #111;
+}
+
+.reaction-emoji {
+  font-size: 1.5em;
+  margin-bottom: 5px;
+}
+
+.reaction-count {
+  font-size: 0.8em;
+  color: #666;
+}
+
+.quest-item {
+  border-left: 2px solid #333;
+  padding-left: 10px;
+  margin-bottom: 15px;
+}
+
+.quest-meta {
+  font-size: 0.8em;
+  color: #666;
+  margin-top: 5px;
+}
+
+.admin-controls {
+  margin-top: 50px;
+  padding: 20px;
+  border: 1px dashed #333;
+  background: #080808;
+}
+
+details > summary {
+  cursor: pointer;
+  color: #666;
+  font-size: 0.9em;
+}
+details > summary:hover {
+  color: #999;
+}
