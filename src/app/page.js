@@ -1,5 +1,10 @@
 import { getDashboardData, recordBath, recordOut, addReaction, addQuest, completeQuest, deleteQuest, logout } from './actions';
 import Link from 'next/link';
+import ActionForm from '@/components/ActionForm';
+
+export const dynamic = 'force-dynamic';
+export const fetchCache = 'force-no-store';
+export const revalidate = 0;
 
 function getRelativeTime(dateString) {
   if (!dateString) return '記録なし';
@@ -48,24 +53,24 @@ export default async function Home() {
       </div>
 
       <div className="section flex gap-4">
-        <form action={addReaction.bind(null, 'monitor')}>
+        <ActionForm action={addReaction.bind(null, 'monitor')}>
           <button type="submit" className="reaction-btn">
             <span className="reaction-emoji">👁️</span>
             <span className="reaction-count">監視中 {data.reactions.monitor}</span>
           </button>
-        </form>
-        <form action={addReaction.bind(null, 'survival')}>
+        </ActionForm>
+        <ActionForm action={addReaction.bind(null, 'survival')}>
           <button type="submit" className="reaction-btn">
             <span className="reaction-emoji">👍</span>
             <span className="reaction-count">生存確認 {data.reactions.survival}</span>
           </button>
-        </form>
-        <form action={addReaction.bind(null, 'bath')}>
+        </ActionForm>
+        <ActionForm action={addReaction.bind(null, 'bath')}>
           <button type="submit" className="reaction-btn">
             <span className="reaction-emoji">🧼</span>
             <span className="reaction-count">風呂入れ {data.reactions.bath}</span>
           </button>
-        </form>
+        </ActionForm>
       </div>
 
       <div className="section">
@@ -78,24 +83,24 @@ export default async function Home() {
               <span>by {q.author_name} ({formatDate(q.created_at)})</span>
               {data.admin && (
                 <div className="flex gap-2">
-                  <form action={completeQuest.bind(null, q.id)}>
+                  <ActionForm action={completeQuest.bind(null, q.id)}>
                     <button type="submit" className="text-xs">達成</button>
-                  </form>
-                  <form action={deleteQuest.bind(null, q.id)}>
+                  </ActionForm>
+                  <ActionForm action={deleteQuest.bind(null, q.id)}>
                     <button type="submit" className="text-xs text-[#844]">削除</button>
-                  </form>
+                  </ActionForm>
                 </div>
               )}
             </div>
           </div>
         ))}
 
-        <form action={handleAddQuest} className="mt-6 flex flex-col gap-2 p-4 border border-[#222]">
+        <ActionForm action={handleAddQuest} className="mt-6 flex flex-col gap-2 p-4 border border-[#222]">
           <div className="text-sm text-[#888]">クエストを追加</div>
           <input type="text" name="content" placeholder="内容 (例: 散歩しろ)" required maxLength={100} />
           <input type="text" name="author_name" placeholder="作成者名" required maxLength={20} />
           <button type="submit" className="w-fit">送信</button>
-        </form>
+        </ActionForm>
       </div>
 
       {data.completedQuests.length > 0 && (
@@ -118,16 +123,16 @@ export default async function Home() {
         <div className="admin-controls">
           <div className="text-sm text-[#888] mb-4">管理者メニュー</div>
           <div className="flex gap-4 mb-4">
-            <form action={recordBath}>
+            <ActionForm action={recordBath}>
               <button type="submit">風呂入った</button>
-            </form>
-            <form action={recordOut}>
+            </ActionForm>
+            <ActionForm action={recordOut}>
               <button type="submit">外出した</button>
-            </form>
+            </ActionForm>
           </div>
-          <form action={logout}>
+          <ActionForm action={logout}>
             <button type="submit" className="text-xs">ログアウト</button>
-          </form>
+          </ActionForm>
         </div>
       ) : (
         <div className="mt-12 text-center text-xs">
