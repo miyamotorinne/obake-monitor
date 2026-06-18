@@ -1,6 +1,7 @@
 import { getDashboardData, recordBath, recordOut, addReaction, addQuest, completeQuest, deleteQuest, logout } from './actions';
 import Link from 'next/link';
 import ActionForm from '@/components/ActionForm';
+import SubmitButton from '@/components/SubmitButton';
 
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
@@ -99,7 +100,7 @@ export default async function Home() {
           <div className="text-sm text-[#888]">クエストを追加</div>
           <input type="text" name="content" placeholder="内容 (例: 散歩しろ)" required maxLength={100} />
           <input type="text" name="author_name" placeholder="作成者名" required maxLength={20} />
-          <button type="submit" className="w-fit">送信</button>
+          <SubmitButton className="w-fit">送信</SubmitButton>
         </ActionForm>
       </div>
 
