@@ -8,7 +8,7 @@ export const revalidate = 0;
 
 function getRelativeTime(dateString) {
   if (!dateString) return '記録なし';
-  const date = new Date(dateString + 'Z');
+  const date = new Date(dateString.replace(' ', 'T') + 'Z');
   const now = new Date();
   const diffMs = now - date;
   const diffSecs = Math.floor(diffMs / 1000);
@@ -24,7 +24,7 @@ function getRelativeTime(dateString) {
 
 function formatDate(dateString) {
   if (!dateString) return '';
-  const date = new Date(dateString + 'Z');
+  const date = new Date(dateString.replace(' ', 'T') + 'Z');
   return date.toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
