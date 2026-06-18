@@ -25,7 +25,7 @@ function getRelativeTime(dateString) {
 function formatDate(dateString) {
   if (!dateString) return '';
   const date = new Date(dateString.replace(' ', 'T') + 'Z');
-  return date.toLocaleString('ja-JP', { month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
+  return date.toLocaleString('ja-JP', { timeZone: 'Asia/Tokyo', month: '2-digit', day: '2-digit', hour: '2-digit', minute: '2-digit' });
 }
 
 export default async function Home() {
