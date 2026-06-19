@@ -17,7 +17,10 @@ function getRelativeTime(dateString) {
   const diffHours = Math.floor(diffMins / 60);
   const diffDays = Math.floor(diffHours / 24);
 
-  if (diffDays > 0) return `${diffDays}日前`;
+  if (diffDays > 0) {
+    const remainingHours = diffHours % 24;
+    return remainingHours > 0 ? `${diffDays}日${remainingHours}時間前` : `${diffDays}日前`;
+  }
   if (diffHours > 0) return `${diffHours}時間前`;
   if (diffMins > 0) return `${diffMins}分前`;
   return 'たった今';

@@ -1,6 +1,8 @@
-import { getObservers, getCurrentObserver } from '@/app/actions';
+import { getObservers, getCurrentObserver, isAdmin, giveGachaTicketToObserver } from '@/app/actions';
 import Link from 'next/link';
 import { titlesData } from '@/lib/titles';
+import ActionForm from '@/components/ActionForm';
+import SubmitButton from '@/components/SubmitButton';
 
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
@@ -14,6 +16,7 @@ function formatDate(dateString) {
 export default async function ObserversPage() {
   const currentObserver = await getCurrentObserver();
   const observers = await getObservers();
+  const admin = await isAdmin();
 
   return (
     <main>
@@ -35,19 +38,30 @@ export default async function ObserversPage() {
                                isRare ? 'text-[#a66]' : 'text-[#ccc]';
 
             return (
-              <Link key={obs.id} href={`/observers/${obs.id}`} className="block p-4 border border-[#222] hover:border-[#444] transition-colors border-none-hover no-underline">
-                <div className="flex justify-between items-center mb-2">
-                  <div className="text-lg font-bold">
-                    {obs.name}
-                    {currentObserver?.id === obs.id && <span className="ml-2 text-xs text-[#888] font-normal">(あなた)</span>}
+              <div key={obs.id} className="block p-4 border border-[#222] hover:border-[#444] transition-colors border-none-hover">
+                <Link href={`/observers/${obs.id}`} className="no-underline block">
+                  <div className="flex justify-between items-center mb-2">
+                    <div className="text-lg font-bold">
+                      {obs.name}
+                      {currentObserver?.id === obs.id && <span className="ml-2 text-xs text-[#888] font-normal">(あなた)</span>}
+                    </div>
+                    <div className="text-xs text-[#666]">登録: {formatDate(obs.created_at)}</div>
                   </div>
-                  <div className="text-xs text-[#666]">登録: {formatDate(obs.created_at)}</div>
-                </div>
-                <div className="flex justify-between text-xs">
-                  <span className={titleColor}>{obs.favorite_title ? `【${obs.favorite_title}】${isRare ? ' ★' : ''}` : '【称号未設定】'}</span>
-                  <span className="font-mono text-[#888]">{obs.points} pt</span>
-                </div>
-              </Link>
+                  <div className="flex justify-between text-xs">
+                    <span className={titleColor}>{obs.favorite_title ? `【${obs.favorite_title}】${isRare ? ' ★' : ''}` : '【称号未設定】'}</span>
+                    <span className="font-mono text-[#888]">{obs.points} pt</span>
+                  </div>
+                </Link>
+                {admin && (
+                  <div className="mt-4 pt-4 border-t border-[#222] flex justify-end">
+                    <ActionForm action={giveGachaTicketToObserver.bind(null, obs.id)}>
+                      <SubmitButton className="text-[10px] px-3 py-1 bg-[#111] hover:bg-[#222] border border-[#333]">
+                        ガチャ券を1枚配る
+                      </SubmitButton>
+                    </ActionForm>
+                  </div>
+                )}
+              </div>
             );
           })}
         </div>

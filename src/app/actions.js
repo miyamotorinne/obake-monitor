@@ -8,7 +8,7 @@ import { titlesData } from '@/lib/titles';
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'obake';
 
-async function isAdmin() {
+export async function isAdmin() {
   const cookieStore = await cookies();
   return cookieStore.get('obake_auth')?.value === 'true';
 }
@@ -334,4 +334,16 @@ export async function rollGacha() {
 export async function getGachaHistory() {
   const res = await db.execute(`SELECT * FROM gacha_history ORDER BY created_at DESC LIMIT 20`);
   return res.rows;
+}
+
+export async function giveGachaTicketToObserver(observerId) {
+  if (!(await isAdmin())) throw new Error('Unauthorized');
+  
+  await db.execute({
+    sql: `UPDATE observers SET gacha_tickets = gacha_tickets + 1 WHERE id = ?`,
+    args: [observerId]
+  });
+  
+  revalidatePath('/observers');
+  revalidatePath(`/observers/${observerId}`);
 }
