@@ -27,7 +27,34 @@ db.executeMultiple(`
     author_name TEXT NOT NULL,
     status TEXT NOT NULL DEFAULT 'pending',
     created_at DATETIME DEFAULT CURRENT_TIMESTAMP,
-    completed_at DATETIME
+    completed_at DATETIME,
+    observer_id INTEGER
+  );
+
+  CREATE TABLE IF NOT EXISTS observers (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    token TEXT UNIQUE NOT NULL,
+    name TEXT NOT NULL,
+    points INTEGER DEFAULT 0,
+    favorite_title TEXT,
+    gacha_tickets INTEGER DEFAULT 0,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
+  );
+
+  CREATE TABLE IF NOT EXISTS observer_titles (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    observer_id INTEGER NOT NULL,
+    name TEXT NOT NULL,
+    is_rare BOOLEAN DEFAULT 0,
+    acquired_at DATETIME DEFAULT CURRENT_TIMESTAMP,
+    FOREIGN KEY (observer_id) REFERENCES observers(id)
+  );
+
+  CREATE TABLE IF NOT EXISTS gacha_history (
+    id INTEGER PRIMARY KEY AUTOINCREMENT,
+    observer_name TEXT NOT NULL,
+    title_name TEXT NOT NULL,
+    created_at DATETIME DEFAULT CURRENT_TIMESTAMP
   );
 `).catch(err => {
   console.error("Failed to initialize database tables:", err);

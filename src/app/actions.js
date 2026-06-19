@@ -3,6 +3,8 @@
 import db from '@/lib/db';
 import { cookies } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import crypto from 'crypto';
+import { titlesData } from '@/lib/titles';
 
 const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'obake';
 
@@ -88,6 +90,9 @@ export async function recordBath() {
   // Reset reactions
   await db.execute(`DELETE FROM reactions`);
   
+  // Distribute Gacha Tickets
+  await db.execute(`UPDATE observers SET gacha_tickets = gacha_tickets + 1`);
+  
   revalidatePath('/');
 }
 
@@ -113,9 +118,12 @@ export async function addReaction(type) {
 export async function addQuest(content, authorName) {
   if (!content || !authorName) throw new Error('Missing fields');
   
+  const observer = await getCurrentObserver();
+  const observerId = observer ? observer.id : null;
+  
   await db.execute({
-    sql: `INSERT INTO quests (content, author_name) VALUES (?, ?)`,
-    args: [content, authorName]
+    sql: `INSERT INTO quests (content, author_name, observer_id) VALUES (?, ?, ?)`,
+    args: [content, authorName, observerId]
   });
   
   revalidatePath('/');
@@ -124,10 +132,56 @@ export async function addQuest(content, authorName) {
 export async function completeQuest(id) {
   if (!(await isAdmin())) throw new Error('Unauthorized');
   
+  const questRes = await db.execute({
+    sql: `SELECT * FROM quests WHERE id = ?`,
+    args: [id]
+  });
+  const quest = questRes.rows[0];
+  if (!quest) throw new Error('Quest not found');
+
   await db.execute({
     sql: `UPDATE quests SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
     args: [id]
   });
+
+  if (quest.observer_id) {
+    const obsRes = await db.execute({
+      sql: `SELECT points FROM observers WHERE id = ?`,
+      args: [quest.observer_id]
+    });
+    const observer = obsRes.rows[0];
+    if (observer) {
+      const newPoints = observer.points + 10;
+      await db.execute({
+        sql: `UPDATE observers SET points = ? WHERE id = ?`,
+        args: [newPoints, quest.observer_id]
+      });
+
+      const thresholds = [
+        { pt: 10, title: '見習い観測者' },
+        { pt: 30, title: '漂流者' },
+        { pt: 50, title: '観測者' },
+        { pt: 100, title: '監視員' },
+        { pt: 200, title: '干渉者' },
+        { pt: 500, title: '世界改変者' }
+      ];
+
+      for (const th of thresholds) {
+        if (newPoints >= th.pt) {
+          const ownsRes = await db.execute({
+            sql: `SELECT id FROM observer_titles WHERE observer_id = ? AND name = ?`,
+            args: [quest.observer_id, th.title]
+          });
+          if (ownsRes.rows.length === 0) {
+            await db.execute({
+              sql: `INSERT INTO observer_titles (observer_id, name, is_rare) VALUES (?, ?, 0)`,
+              args: [quest.observer_id, th.title]
+            });
+          }
+        }
+      }
+    }
+  }
   
   revalidatePath('/');
 }
@@ -141,4 +195,143 @@ export async function deleteQuest(id) {
   });
   
   revalidatePath('/');
+}
+
+// 観測者システム関連のアクション
+
+export async function getCurrentObserver() {
+  const cookieStore = await cookies();
+  const token = cookieStore.get('observer_token')?.value;
+  if (!token) return null;
+  
+  const res = await db.execute({
+    sql: `SELECT id, name, points, favorite_title, gacha_tickets, created_at FROM observers WHERE token = ?`,
+    args: [token]
+  });
+  return res.rows[0] || null;
+}
+
+export async function registerObserver(name) {
+  if (!name || name.trim() === '') throw new Error('観測者名が必要です');
+  
+  const token = crypto.randomUUID();
+  await db.execute({
+    sql: `INSERT INTO observers (token, name) VALUES (?, ?)`,
+    args: [token, name.trim()]
+  });
+  
+  const cookieStore = await cookies();
+  cookieStore.set('observer_token', token, {
+    httpOnly: true,
+    secure: process.env.NODE_ENV === 'production',
+    maxAge: 60 * 60 * 24 * 365, // 1 year
+    path: '/',
+  });
+  
+  revalidatePath('/');
+}
+
+export async function getObservers() {
+  const res = await db.execute(`SELECT id, name, points, favorite_title, created_at FROM observers ORDER BY created_at ASC`);
+  return res.rows;
+}
+
+export async function getObserverById(id) {
+  const res = await db.execute({
+    sql: `SELECT id, name, points, favorite_title, created_at FROM observers WHERE id = ?`,
+    args: [id]
+  });
+  return res.rows[0] || null;
+}
+
+export async function getObserverTitles(observerId) {
+  const res = await db.execute({
+    sql: `SELECT * FROM observer_titles WHERE observer_id = ? ORDER BY acquired_at DESC`,
+    args: [observerId]
+  });
+  return res.rows;
+}
+
+export async function setFavoriteTitle(titleName) {
+  const observer = await getCurrentObserver();
+  if (!observer) throw new Error('Unauthorized');
+
+  // Verify they own the title
+  const ownsTitle = await db.execute({
+    sql: `SELECT id FROM observer_titles WHERE observer_id = ? AND name = ?`,
+    args: [observer.id, titleName]
+  });
+  
+  if (ownsTitle.rows.length === 0) throw new Error('You do not own this title');
+
+  await db.execute({
+    sql: `UPDATE observers SET favorite_title = ? WHERE id = ?`,
+    args: [titleName, observer.id]
+  });
+
+  revalidatePath('/observers');
+  revalidatePath(`/observers/${observer.id}`);
+}
+
+
+export async function rollGacha() {
+  const observer = await getCurrentObserver();
+  if (!observer) throw new Error('Unauthorized');
+  if (observer.gacha_tickets <= 0) throw new Error('No tickets');
+
+  // Deduct ticket
+  await db.execute({
+    sql: `UPDATE observers SET gacha_tickets = gacha_tickets - 1 WHERE id = ?`,
+    args: [observer.id]
+  });
+
+  // Roll
+  const rand = Math.random();
+  let selectedRarity = 'N';
+  if (rand < 0.05) selectedRarity = 'SSR';
+  else if (rand < 0.25) selectedRarity = 'R';
+
+  const possibleTitles = titlesData.filter(t => t.rarity === selectedRarity);
+  const title = possibleTitles[Math.floor(Math.random() * possibleTitles.length)];
+
+  // Check duplicate
+  const ownsRes = await db.execute({
+    sql: `SELECT id FROM observer_titles WHERE observer_id = ? AND name = ?`,
+    args: [observer.id, title.name]
+  });
+
+  let isDuplicate = ownsRes.rows.length > 0;
+  let pointsGained = 0;
+
+  if (isDuplicate) {
+    if (title.rarity === 'N') pointsGained = 1;
+    else if (title.rarity === 'R') pointsGained = 3;
+    else if (title.rarity === 'SSR') pointsGained = 10;
+
+    await db.execute({
+      sql: `UPDATE observers SET points = points + ? WHERE id = ?`,
+      args: [pointsGained, observer.id]
+    });
+  } else {
+    await db.execute({
+      sql: `INSERT INTO observer_titles (observer_id, name, is_rare) VALUES (?, ?, ?)`,
+      args: [observer.id, title.name, title.rarity !== 'N' ? 1 : 0]
+    });
+  }
+
+  // Log history
+  await db.execute({
+    sql: `INSERT INTO gacha_history (observer_name, title_name) VALUES (?, ?)`,
+    args: [observer.name, title.name]
+  });
+
+  revalidatePath('/gacha');
+  revalidatePath(`/observers/${observer.id}`);
+
+  return { title, isDuplicate, pointsGained };
+}
+
+export async function getGachaHistory() {
+  const res = await db.execute(`SELECT * FROM gacha_history ORDER BY created_at DESC LIMIT 20`);
+  return res.rows;
 }

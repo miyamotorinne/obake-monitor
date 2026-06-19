@@ -1,4 +1,4 @@
-import { getDashboardData, recordBath, recordOut, addReaction, addQuest, completeQuest, deleteQuest, logout } from './actions';
+import { getDashboardData, recordBath, recordOut, addReaction, addQuest, completeQuest, deleteQuest, logout, getCurrentObserver, registerObserver } from './actions';
 import Link from 'next/link';
 import ActionForm from '@/components/ActionForm';
 import SubmitButton from '@/components/SubmitButton';
@@ -30,6 +30,35 @@ function formatDate(dateString) {
 }
 
 export default async function Home() {
+  const currentObserver = await getCurrentObserver();
+
+  if (!currentObserver) {
+    async function handleRegister(formData) {
+      'use server';
+      const name = formData.get('observer_name');
+      if (name) {
+        await registerObserver(name);
+      }
+    }
+
+    return (
+      <main>
+        <div className="section text-center mt-12">
+          <h2 className="section-title mb-6 border-none text-[#aaa]">観測者システムへようこそ</h2>
+          <p className="text-sm text-[#888] mb-8 leading-relaxed">
+            このサイトは身内向けの監視ログです。<br/>
+            初回のみ、あなたを識別するための観測者名を入力してください。<br/>
+            ※クエスト投稿名とは別の名前を設定できます。
+          </p>
+          <ActionForm action={handleRegister} className="flex flex-col gap-4 max-w-[300px] mx-auto border border-[#222] p-6">
+            <input type="text" name="observer_name" placeholder="観測者名 (例: KUSAI)" required maxLength={20} className="w-full text-center" />
+            <SubmitButton className="w-full">観測を開始する</SubmitButton>
+          </ActionForm>
+        </div>
+      </main>
+    );
+  }
+
   const data = await getDashboardData();
 
   async function handleAddQuest(formData) {
@@ -140,6 +169,11 @@ export default async function Home() {
           <Link href="/login" className="text-[#333] hover:text-[#666] border-none">π</Link>
         </div>
       )}
+
+      <div className="mt-16 text-center text-xs opacity-50 hover:opacity-100 transition-opacity flex justify-center gap-6">
+        <Link href="/observers" className="text-[#888] hover:text-[#aaa] border-none tracking-widest">[ 観測者名簿 ]</Link>
+        <Link href="/gacha" className="text-[#888] hover:text-[#aaa] border-none tracking-widest">[ 観測ガチャ ]</Link>
+      </div>
     </main>
   );
 }
