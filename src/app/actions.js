@@ -118,13 +118,36 @@ export async function addReaction(type) {
 export async function addQuest(content, authorName) {
   if (!content || !authorName) throw new Error('Missing fields');
   
-  const observer = await getCurrentObserver();
-  const observerId = observer ? observer.id : null;
+  let observerId = null;
+  try {
+    const observer = await getCurrentObserver();
+    if (observer && observer.id) {
+      observerId = observer.id;
+    }
+  } catch (err) {
+    console.error("Failed to get current observer in addQuest:", err);
+  }
   
-  await db.execute({
-    sql: `INSERT INTO quests (content, author_name, observer_id) VALUES (?, ?, ?)`,
-    args: [content, authorName, observerId]
-  });
+  try {
+    if (observerId) {
+      await db.execute({
+        sql: `INSERT INTO quests (content, author_name, observer_id) VALUES (?, ?, ?)`,
+        args: [content, authorName, observerId]
+      });
+    } else {
+      await db.execute({
+        sql: `INSERT INTO quests (content, author_name) VALUES (?, ?)`,
+        args: [content, authorName]
+      });
+    }
+  } catch (err) {
+    console.error("addQuest DB error:", err);
+    // Fallback in case observer_id column does not exist in production
+    await db.execute({
+      sql: `INSERT INTO quests (content, author_name) VALUES (?, ?)`,
+      args: [content, authorName]
+    });
+  }
   
   revalidatePath('/');
 }
