@@ -10,12 +10,17 @@ export default function Login() {
   const [error, setError] = useState('');
 
   async function handleSubmit(formData) {
-    const password = formData.get('password');
-    const result = await login(password);
-    if (result.success) {
-      router.push('/');
-    } else {
-      setError(result.error);
+    try {
+      const password = formData.get('password');
+      const result = await login(password);
+      if (result.success) {
+        router.push('/');
+      } else {
+        setError(result.error);
+      }
+    } catch (error) {
+      console.error('Admin login failed:', error);
+      setError('ログイン処理に失敗しました。しばらくしてから再試行してください');
     }
   }
 

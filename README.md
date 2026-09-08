@@ -1,3 +1,21 @@
+# OBAKE MONITOR
+
+身内向けの入浴・外出記録、リアクション、クエスト、観測者称号、ガチャを扱うNext.jsアプリです。
+
+## データ保護
+
+- 観測者のポイント、称号、ガチャ券はデータベースに保存されます。
+- ブラウザの `observer_token` Cookieは既存観測者を特定する鍵です。値やCookie名を変更しないでください。
+- DB変更前は稼働中のDBをバックアップし、復元と件数を確認してください。
+- `obake.db` には観測者トークンが含まれます。外部へ共有しないでください。
+- `test.js` はDBへテスト投稿を書き込むため、本番DBに接続した状態で実行しないでください。
+
+## 設定
+
+`.env.example` を参考に、`ADMIN_PASSWORD` と本番DB接続情報を環境変数で設定します。管理者パスワードの既定値はありません。
+
+起動・ビルド前に `npm run db:migrate` が自動実行され、既存データを残したまま必要なテーブルとインデックスを追加します。
+
 This is a [Next.js](https://nextjs.org) project bootstrapped with [`create-next-app`](https://github.com/vercel/next.js/tree/canary/packages/create-next-app).
 
 ## Getting Started

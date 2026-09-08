@@ -3,21 +3,25 @@
   "version": "0.1.0",
   "private": true,
   "scripts": {
+    "db:migrate": "node scripts/migrate.mjs",
+    "predev": "npm run db:migrate",
     "dev": "next dev",
+    "prebuild": "npm run db:migrate",
     "build": "next build",
+    "prestart": "npm run db:migrate",
     "start": "next start",
     "lint": "eslint"
   },
   "dependencies": {
     "@libsql/client": "^0.17.4",
-    "next": "16.2.9",
+    "next": "16.3.4",
     "react": "19.2.4",
     "react-dom": "19.2.4"
   },
   "devDependencies": {
     "@tailwindcss/postcss": "^4",
     "eslint": "^9",
-    "eslint-config-next": "16.2.9",
+    "eslint-config-next": "16.3.4",
     "tailwindcss": "^4"
   }
 }

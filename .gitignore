@@ -13,6 +13,11 @@
 # testing
 /coverage
 
+# local database backups (contain private observer tokens)
+/.backups/
+*.db-shm
+*.db-wal
+
 # next.js
 /.next/
 /out/
@@ -32,6 +37,7 @@ yarn-error.log*
 
 # env files (can opt-in for committing if needed)
 .env*
+!.env.example
 
 # vercel
 .vercel

@@ -57,11 +57,17 @@ export async function login(password) {
   }
 
   const actorHash = await getLoginActorHash();
-  await db.execute(`DELETE FROM admin_login_attempts WHERE attempted_at <= datetime('now', '-${LOGIN_WINDOW_MINUTES} minutes')`);
-  const attemptResult = await db.execute({
-    sql: `SELECT COUNT(*) AS count FROM admin_login_attempts WHERE actor_hash = ? AND attempted_at > datetime('now', '-${LOGIN_WINDOW_MINUTES} minutes')`,
-    args: [actorHash],
-  });
+  let attemptResult;
+  try {
+    await db.execute(`DELETE FROM admin_login_attempts WHERE attempted_at <= datetime('now', '-${LOGIN_WINDOW_MINUTES} minutes')`);
+    attemptResult = await db.execute({
+      sql: `SELECT COUNT(*) AS count FROM admin_login_attempts WHERE actor_hash = ? AND attempted_at > datetime('now', '-${LOGIN_WINDOW_MINUTES} minutes')`,
+      args: [actorHash],
+    });
+  } catch (error) {
+    console.error('Admin login database migration is missing:', error);
+    return { success: false, error: 'データベースの更新が未完了です。管理者に連絡してください' };
+  }
 
   if (Number(attemptResult.rows[0].count) >= LOGIN_ATTEMPT_LIMIT) {
     return { success: false, error: 'ログイン試行が多すぎます。15分後に再試行してください' };
