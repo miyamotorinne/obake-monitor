@@ -1,35 +1,89 @@
 'use server';
 
-import db from '@/lib/db';
-import { cookies } from 'next/headers';
+import db, { withTransaction } from '@/lib/db';
+import { cookies, headers } from 'next/headers';
 import { revalidatePath } from 'next/cache';
+import { redirect } from 'next/navigation';
 import crypto from 'crypto';
 import { titlesData } from '@/lib/titles';
+import {
+  ADMIN_COOKIE_NAME,
+  OBSERVER_COOKIE_NAME,
+  adminCookieOptions,
+  observerCookieOptions,
+} from '@/lib/cookie-options';
+import { createAdminSession, passwordsMatch, verifyAdminSession } from '@/lib/admin-session';
 
-const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD || 'obake';
+const ADMIN_PASSWORD = process.env.ADMIN_PASSWORD;
+const LOGIN_WINDOW_MINUTES = 15;
+const LOGIN_ATTEMPT_LIMIT = 5;
+
+const pointTitleThresholds = [
+  { pt: 10, title: '見習い観測者' },
+  { pt: 30, title: '漂流者' },
+  { pt: 50, title: '観測者' },
+  { pt: 100, title: '監視員' },
+  { pt: 200, title: '干渉者' },
+  { pt: 500, title: '世界改変者' },
+];
+
+function normalizeText(value, maxLength, label) {
+  if (typeof value !== 'string') throw new Error(`${label}が必要です`);
+  const normalized = value.trim();
+  if (!normalized) throw new Error(`${label}が必要です`);
+  if (normalized.length > maxLength) throw new Error(`${label}は${maxLength}文字以内にしてください`);
+  return normalized;
+}
+
+function recoveryCodeHash(code) {
+  return crypto.createHash('sha256').update(code).digest('hex');
+}
+
+async function getLoginActorHash() {
+  const requestHeaders = await headers();
+  const forwardedFor = requestHeaders.get('x-forwarded-for')?.split(',')[0]?.trim();
+  const actor = forwardedFor || requestHeaders.get('x-real-ip') || requestHeaders.get('user-agent') || 'unknown';
+  return crypto.createHash('sha256').update(actor).digest('hex');
+}
 
 export async function isAdmin() {
   const cookieStore = await cookies();
-  return cookieStore.get('obake_auth')?.value === 'true';
+  return verifyAdminSession(cookieStore.get(ADMIN_COOKIE_NAME)?.value);
 }
 
 export async function login(password) {
-  if (password === ADMIN_PASSWORD) {
+  if (!ADMIN_PASSWORD) {
+    return { success: false, error: '管理者パスワードが設定されていません' };
+  }
+
+  const actorHash = await getLoginActorHash();
+  await db.execute(`DELETE FROM admin_login_attempts WHERE attempted_at <= datetime('now', '-${LOGIN_WINDOW_MINUTES} minutes')`);
+  const attemptResult = await db.execute({
+    sql: `SELECT COUNT(*) AS count FROM admin_login_attempts WHERE actor_hash = ? AND attempted_at > datetime('now', '-${LOGIN_WINDOW_MINUTES} minutes')`,
+    args: [actorHash],
+  });
+
+  if (Number(attemptResult.rows[0].count) >= LOGIN_ATTEMPT_LIMIT) {
+    return { success: false, error: 'ログイン試行が多すぎます。15分後に再試行してください' };
+  }
+
+  if (passwordsMatch(password, ADMIN_PASSWORD)) {
+    await db.execute({ sql: 'DELETE FROM admin_login_attempts WHERE actor_hash = ?', args: [actorHash] });
     const cookieStore = await cookies();
-    cookieStore.set('obake_auth', 'true', {
-      httpOnly: true,
-      secure: process.env.NODE_ENV === 'production',
-      maxAge: 60 * 60 * 24 * 30, // 30 days
-      path: '/',
-    });
+    cookieStore.set(ADMIN_COOKIE_NAME, createAdminSession(), adminCookieOptions());
     return { success: true };
   }
+
+  await db.execute({
+    sql: 'INSERT INTO admin_login_attempts (actor_hash) VALUES (?)',
+    args: [actorHash],
+  });
   return { success: false, error: 'パスワードが違います' };
 }
 
 export async function logout() {
   const cookieStore = await cookies();
-  cookieStore.delete('obake_auth');
+  cookieStore.delete(ADMIN_COOKIE_NAME);
   revalidatePath('/');
 }
 
@@ -84,127 +138,114 @@ export async function getDashboardData() {
 
 export async function recordBath() {
   if (!(await isAdmin())) throw new Error('Unauthorized');
-  
-  await db.execute(`INSERT INTO events (type) VALUES ('bath')`);
-  
-  // Reset reactions
-  await db.execute(`DELETE FROM reactions`);
-  
-  // Distribute Gacha Tickets
-  await db.execute(`UPDATE observers SET gacha_tickets = gacha_tickets + 1`);
+
+  await withTransaction(async (transaction) => {
+    const inserted = await transaction.execute(`
+      INSERT INTO events (type)
+      SELECT 'bath'
+      WHERE NOT EXISTS (
+        SELECT 1 FROM events
+        WHERE type = 'bath' AND created_at > datetime('now', '-30 seconds')
+      )
+      RETURNING id
+    `);
+
+    if (inserted.rows.length === 0) return;
+    await transaction.execute('DELETE FROM reactions');
+    await transaction.execute('UPDATE observers SET gacha_tickets = gacha_tickets + 1');
+  });
   
   revalidatePath('/');
 }
 
 export async function recordOut() {
   if (!(await isAdmin())) throw new Error('Unauthorized');
-  
-  await db.execute(`INSERT INTO events (type) VALUES ('out')`);
+
+  await db.execute(`
+    INSERT INTO events (type)
+    SELECT 'out'
+    WHERE NOT EXISTS (
+      SELECT 1 FROM events
+      WHERE type = 'out' AND created_at > datetime('now', '-30 seconds')
+    )
+  `);
   
   revalidatePath('/');
 }
 
 export async function addReaction(type) {
   if (!['monitor', 'survival', 'bath'].includes(type)) throw new Error('Invalid reaction type');
-  
+
+  const observer = await getCurrentObserver();
+  if (!observer) throw new Error('Unauthorized');
+
   await db.execute({
-    sql: `INSERT INTO reactions (type) VALUES (?)`,
-    args: [type]
+    sql: `
+      INSERT INTO reactions (type, observer_id)
+      SELECT ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM reactions
+        WHERE observer_id = ? AND type = ? AND created_at > datetime('now', '-3 seconds')
+      )
+    `,
+    args: [type, observer.id, observer.id, type],
   });
   
   revalidatePath('/');
 }
 
 export async function addQuest(content, authorName) {
-  if (!content || !authorName) throw new Error('Missing fields');
-  
-  let observerId = null;
-  try {
-    const observer = await getCurrentObserver();
-    if (observer && observer.id) {
-      observerId = observer.id;
-    }
-  } catch (err) {
-    console.error("Failed to get current observer in addQuest:", err);
-  }
-  
-  try {
-    if (observerId) {
-      await db.execute({
-        sql: `INSERT INTO quests (content, author_name, observer_id) VALUES (?, ?, ?)`,
-        args: [content, authorName, observerId]
-      });
-    } else {
-      await db.execute({
-        sql: `INSERT INTO quests (content, author_name) VALUES (?, ?)`,
-        args: [content, authorName]
-      });
-    }
-  } catch (err) {
-    console.error("addQuest DB error:", err);
-    // Fallback in case observer_id column does not exist in production
-    await db.execute({
-      sql: `INSERT INTO quests (content, author_name) VALUES (?, ?)`,
-      args: [content, authorName]
-    });
-  }
+  const normalizedContent = normalizeText(content, 100, '内容');
+  const normalizedAuthor = normalizeText(authorName, 20, '作成者名');
+  const observer = await getCurrentObserver();
+  if (!observer) throw new Error('Unauthorized');
+
+  const inserted = await db.execute({
+    sql: `
+      INSERT INTO quests (content, author_name, observer_id)
+      SELECT ?, ?, ?
+      WHERE NOT EXISTS (
+        SELECT 1 FROM quests
+        WHERE observer_id = ? AND created_at > datetime('now', '-5 seconds')
+      )
+      RETURNING id
+    `,
+    args: [normalizedContent, normalizedAuthor, observer.id, observer.id],
+  });
+  if (inserted.rows.length === 0) throw new Error('連続投稿は少し待ってから行ってください');
   
   revalidatePath('/');
 }
 
 export async function completeQuest(id) {
   if (!(await isAdmin())) throw new Error('Unauthorized');
-  
-  const questRes = await db.execute({
-    sql: `SELECT * FROM quests WHERE id = ?`,
-    args: [id]
-  });
-  const quest = questRes.rows[0];
-  if (!quest) throw new Error('Quest not found');
 
-  await db.execute({
-    sql: `UPDATE quests SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ?`,
-    args: [id]
-  });
-
-  if (quest.observer_id) {
-    const obsRes = await db.execute({
-      sql: `SELECT points FROM observers WHERE id = ?`,
-      args: [quest.observer_id]
+  await withTransaction(async (transaction) => {
+    const completed = await transaction.execute({
+      sql: `UPDATE quests SET status = 'completed', completed_at = CURRENT_TIMESTAMP WHERE id = ? AND status = 'pending' RETURNING observer_id`,
+      args: [id],
     });
-    const observer = obsRes.rows[0];
-    if (observer) {
-      const newPoints = observer.points + 10;
-      await db.execute({
-        sql: `UPDATE observers SET points = ? WHERE id = ?`,
-        args: [newPoints, quest.observer_id]
-      });
+    if (completed.rows.length === 0) throw new Error('Quest not found or already completed');
 
-      const thresholds = [
-        { pt: 10, title: '見習い観測者' },
-        { pt: 30, title: '漂流者' },
-        { pt: 50, title: '観測者' },
-        { pt: 100, title: '監視員' },
-        { pt: 200, title: '干渉者' },
-        { pt: 500, title: '世界改変者' }
-      ];
+    const observerId = completed.rows[0].observer_id;
+    if (!observerId) return;
 
-      for (const th of thresholds) {
-        if (newPoints >= th.pt) {
-          const ownsRes = await db.execute({
-            sql: `SELECT id FROM observer_titles WHERE observer_id = ? AND name = ?`,
-            args: [quest.observer_id, th.title]
-          });
-          if (ownsRes.rows.length === 0) {
-            await db.execute({
-              sql: `INSERT INTO observer_titles (observer_id, name, is_rare) VALUES (?, ?, 0)`,
-              args: [quest.observer_id, th.title]
-            });
-          }
-        }
+    const pointResult = await transaction.execute({
+      sql: 'UPDATE observers SET points = points + 10 WHERE id = ? RETURNING points',
+      args: [observerId],
+    });
+    if (pointResult.rows.length === 0) return;
+
+    const newPoints = Number(pointResult.rows[0].points);
+    for (const threshold of pointTitleThresholds) {
+      if (newPoints >= threshold.pt) {
+        await transaction.execute({
+          sql: `INSERT INTO observer_titles (observer_id, name, is_rare) VALUES (?, ?, 0) ON CONFLICT(observer_id, name) DO NOTHING`,
+          args: [observerId, threshold.title],
+        });
       }
     }
-  }
+  });
   
   revalidatePath('/');
 }
@@ -224,7 +265,7 @@ export async function deleteQuest(id) {
 
 export async function getCurrentObserver() {
   const cookieStore = await cookies();
-  const token = cookieStore.get('observer_token')?.value;
+  const token = cookieStore.get(OBSERVER_COOKIE_NAME)?.value;
   if (!token) return null;
   
   const res = await db.execute({
@@ -235,21 +276,23 @@ export async function getCurrentObserver() {
 }
 
 export async function registerObserver(name) {
-  if (!name || name.trim() === '') throw new Error('観測者名が必要です');
+  const normalizedName = normalizeText(name, 20, '観測者名');
+
+  const cookieStore = await cookies();
+  const existingToken = cookieStore.get(OBSERVER_COOKIE_NAME)?.value;
+  if (existingToken) {
+    const existingObserver = await getCurrentObserver();
+    if (existingObserver) return;
+    throw new Error('以前の観測者情報を復旧してください');
+  }
   
   const token = crypto.randomUUID();
   await db.execute({
     sql: `INSERT INTO observers (token, name) VALUES (?, ?)`,
-    args: [token, name.trim()]
+    args: [token, normalizedName]
   });
   
-  const cookieStore = await cookies();
-  cookieStore.set('observer_token', token, {
-    httpOnly: true,
-    secure: process.env.NODE_ENV === 'production',
-    maxAge: 60 * 60 * 24 * 365, // 1 year
-    path: '/',
-  });
+  cookieStore.set(OBSERVER_COOKIE_NAME, token, observerCookieOptions());
   
   revalidatePath('/');
 }
@@ -300,15 +343,7 @@ export async function setFavoriteTitle(titleName) {
 export async function rollGacha() {
   const observer = await getCurrentObserver();
   if (!observer) throw new Error('Unauthorized');
-  if (observer.gacha_tickets <= 0) throw new Error('No tickets');
 
-  // Deduct ticket
-  await db.execute({
-    sql: `UPDATE observers SET gacha_tickets = gacha_tickets - 1 WHERE id = ?`,
-    args: [observer.id]
-  });
-
-  // Roll
   const rand = Math.random();
   let selectedRarity = 'N';
   if (rand < 0.05) selectedRarity = 'SSR';
@@ -317,41 +352,43 @@ export async function rollGacha() {
   const possibleTitles = titlesData.filter(t => t.rarity === selectedRarity);
   const title = possibleTitles[Math.floor(Math.random() * possibleTitles.length)];
 
-  // Check duplicate
-  const ownsRes = await db.execute({
-    sql: `SELECT id FROM observer_titles WHERE observer_id = ? AND name = ?`,
-    args: [observer.id, title.name]
-  });
-
-  let isDuplicate = ownsRes.rows.length > 0;
-  let pointsGained = 0;
-
-  if (isDuplicate) {
-    if (title.rarity === 'N') pointsGained = 1;
-    else if (title.rarity === 'R') pointsGained = 3;
-    else if (title.rarity === 'SSR') pointsGained = 10;
-
-    await db.execute({
-      sql: `UPDATE observers SET points = points + ? WHERE id = ?`,
-      args: [pointsGained, observer.id]
+  const result = await withTransaction(async (transaction) => {
+    const ticketResult = await transaction.execute({
+      sql: `UPDATE observers SET gacha_tickets = gacha_tickets - 1 WHERE id = ? AND gacha_tickets > 0 RETURNING name`,
+      args: [observer.id],
     });
-  } else {
-    await db.execute({
-      sql: `INSERT INTO observer_titles (observer_id, name, is_rare) VALUES (?, ?, ?)`,
-      args: [observer.id, title.name, title.rarity !== 'N' ? 1 : 0]
-    });
-  }
+    if (ticketResult.rows.length === 0) throw new Error('No tickets');
 
-  // Log history
-  await db.execute({
-    sql: `INSERT INTO gacha_history (observer_name, title_name) VALUES (?, ?)`,
-    args: [observer.name, title.name]
+    const titleResult = await transaction.execute({
+      sql: `INSERT INTO observer_titles (observer_id, name, is_rare) VALUES (?, ?, ?) ON CONFLICT(observer_id, name) DO NOTHING RETURNING id`,
+      args: [observer.id, title.name, title.rarity !== 'N' ? 1 : 0],
+    });
+
+    const isDuplicate = titleResult.rows.length === 0;
+    let pointsGained = 0;
+    if (isDuplicate) {
+      if (title.rarity === 'N') pointsGained = 1;
+      else if (title.rarity === 'R') pointsGained = 3;
+      else pointsGained = 10;
+
+      await transaction.execute({
+        sql: `UPDATE observers SET points = points + ? WHERE id = ?`,
+        args: [pointsGained, observer.id],
+      });
+    }
+
+    await transaction.execute({
+      sql: `INSERT INTO gacha_history (observer_name, title_name) VALUES (?, ?)`,
+      args: [ticketResult.rows[0].name, title.name],
+    });
+
+    return { title, isDuplicate, pointsGained };
   });
 
   revalidatePath('/gacha');
   revalidatePath(`/observers/${observer.id}`);
 
-  return { title, isDuplicate, pointsGained };
+  return result;
 }
 
 export async function getGachaHistory() {
@@ -369,4 +406,95 @@ export async function giveGachaTicketToObserver(observerId) {
   
   revalidatePath('/observers');
   revalidatePath(`/observers/${observerId}`);
+}
+
+export async function createObserverRecoveryCode(observerId) {
+  if (!(await isAdmin())) throw new Error('Unauthorized');
+
+  const observerResult = await db.execute({
+    sql: 'SELECT id, name FROM observers WHERE id = ?',
+    args: [observerId],
+  });
+  const observer = observerResult.rows[0];
+  if (!observer) throw new Error('Observer not found');
+
+  const code = crypto.randomBytes(32).toString('base64url');
+  const codeHash = recoveryCodeHash(code);
+
+  await withTransaction(async (transaction) => {
+    await transaction.execute({
+      sql: `UPDATE observer_recovery_codes SET used_at = CURRENT_TIMESTAMP WHERE observer_id = ? AND used_at IS NULL`,
+      args: [observer.id],
+    });
+    await transaction.execute({
+      sql: `INSERT INTO observer_recovery_codes (observer_id, code_hash, expires_at) VALUES (?, ?, datetime('now', '+30 minutes'))`,
+      args: [observer.id, codeHash],
+    });
+  });
+
+  return { code, observerName: observer.name };
+}
+
+export async function getRecoveryCodeInfo(code) {
+  if (typeof code !== 'string' || !/^[A-Za-z0-9_-]{40,64}$/.test(code)) return null;
+
+  const result = await db.execute({
+    sql: `
+      SELECT o.id AS observer_id, o.name
+      FROM observer_recovery_codes r
+      JOIN observers o ON o.id = r.observer_id
+      WHERE r.code_hash = ? AND r.used_at IS NULL AND r.expires_at > CURRENT_TIMESTAMP
+      LIMIT 1
+    `,
+    args: [recoveryCodeHash(code)],
+  });
+  return result.rows[0] || null;
+}
+
+export async function recoverObserver(code) {
+  if (typeof code !== 'string' || !/^[A-Za-z0-9_-]{40,64}$/.test(code)) {
+    throw new Error('Invalid recovery code');
+  }
+
+  const currentObserver = await getCurrentObserver();
+
+  const observer = await withTransaction(async (transaction) => {
+    const recoveryResult = await transaction.execute({
+      sql: `
+        SELECT observer_id
+        FROM observer_recovery_codes
+        WHERE code_hash = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+        LIMIT 1
+      `,
+      args: [recoveryCodeHash(code)],
+    });
+    if (recoveryResult.rows.length === 0) throw new Error('Recovery code is invalid or expired');
+
+    const observerId = recoveryResult.rows[0].observer_id;
+    if (currentObserver && currentObserver.id !== observerId) {
+      throw new Error('Another observer is already registered in this browser');
+    }
+
+    const claimed = await transaction.execute({
+      sql: `
+        UPDATE observer_recovery_codes
+        SET used_at = CURRENT_TIMESTAMP
+        WHERE code_hash = ? AND observer_id = ? AND used_at IS NULL AND expires_at > CURRENT_TIMESTAMP
+        RETURNING observer_id
+      `,
+      args: [recoveryCodeHash(code), observerId],
+    });
+    if (claimed.rows.length === 0) throw new Error('Recovery code is invalid or expired');
+
+    const result = await transaction.execute({
+      sql: 'SELECT token FROM observers WHERE id = ?',
+      args: [observerId],
+    });
+    if (result.rows.length === 0) throw new Error('Observer not found');
+    return result.rows[0];
+  });
+
+  const cookieStore = await cookies();
+  cookieStore.set(OBSERVER_COOKIE_NAME, observer.token, observerCookieOptions());
+  redirect('/');
 }

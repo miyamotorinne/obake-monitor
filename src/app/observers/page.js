@@ -3,6 +3,7 @@ import Link from 'next/link';
 import { titlesData } from '@/lib/titles';
 import ActionForm from '@/components/ActionForm';
 import SubmitButton from '@/components/SubmitButton';
+import RecoveryLinkButton from '@/components/RecoveryLinkButton';
 
 export const dynamic = 'force-dynamic';
 export const fetchCache = 'force-no-store';
@@ -53,12 +54,13 @@ export default async function ObserversPage() {
                   </div>
                 </Link>
                 {admin && (
-                  <div className="mt-4 pt-4 border-t border-[#222] flex justify-end">
+                  <div className="mt-4 pt-4 border-t border-[#222] flex flex-wrap justify-end gap-2">
                     <ActionForm action={giveGachaTicketToObserver.bind(null, obs.id)}>
                       <SubmitButton className="text-[10px] px-3 py-1 bg-[#111] hover:bg-[#222] border border-[#333]">
                         ガチャ券を1枚配る
                       </SubmitButton>
                     </ActionForm>
+                    <RecoveryLinkButton observerId={obs.id} />
                   </div>
                 )}
               </div>
