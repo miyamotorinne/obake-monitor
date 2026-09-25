@@ -446,7 +446,7 @@ export async function getRecoveryCodeInfo(code) {
 
   const result = await db.execute({
     sql: `
-      SELECT o.id AS observer_id, o.name
+      SELECT o.id AS observer_id, o.name, o.created_at
       FROM observer_recovery_codes r
       JOIN observers o ON o.id = r.observer_id
       WHERE r.code_hash = ? AND r.used_at IS NULL AND r.expires_at > CURRENT_TIMESTAMP
@@ -457,7 +457,7 @@ export async function getRecoveryCodeInfo(code) {
   return result.rows[0] || null;
 }
 
-export async function recoverObserver(code) {
+async function performObserverRecovery(code, allowObserverSwitch) {
   if (typeof code !== 'string' || !/^[A-Za-z0-9_-]{40,64}$/.test(code)) {
     throw new Error('Invalid recovery code');
   }
@@ -477,7 +477,7 @@ export async function recoverObserver(code) {
     if (recoveryResult.rows.length === 0) throw new Error('Recovery code is invalid or expired');
 
     const observerId = recoveryResult.rows[0].observer_id;
-    if (currentObserver && currentObserver.id !== observerId) {
+    if (currentObserver && currentObserver.id !== observerId && !allowObserverSwitch) {
       throw new Error('Another observer is already registered in this browser');
     }
 
@@ -503,4 +503,12 @@ export async function recoverObserver(code) {
   const cookieStore = await cookies();
   cookieStore.set(OBSERVER_COOKIE_NAME, observer.token, observerCookieOptions());
   redirect('/');
+}
+
+export async function recoverObserver(code) {
+  return performObserverRecovery(code, false);
+}
+
+export async function switchObserverWithRecovery(code) {
+  return performObserverRecovery(code, true);
 }
